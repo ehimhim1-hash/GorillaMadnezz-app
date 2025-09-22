@@ -1,0 +1,893 @@
+import SwiftUI
+import Charts
+
+struct ProgressView: View {
+    @EnvironmentObject var progressManager: ProgressManager
+    @EnvironmentObject var themeManager: ThemeManager
+    @EnvironmentObject var authManager: AuthenticationManager
+    @EnvironmentObject var healthManager: HealthManager
+    
+    @State private var selectedTimeFrame: TimeFrame = .month
+    @State private var selectedMetric: ProgressMetric = .workouts
+    @State private var showingDetailedStats = false
+    @State private var showingPersonalRecords = false
+    @State private var animateCharts = false
+    
+    var body: some View {
+        NavigationView {
+            ScrollView {
+                VStack(spacing: 24) {
+                    // Header Stats
+                    headerStatsSection
+                    
+                    // Progress Charts
+                    progressChartsSection
+                    
+                    // Personal Records
+                    personalRecordsSection
+                    
+                    // Body Measurements
+                    bodyMeasurementsSection
+                    
+                    // Achievement Highlights
+                    achievementsSection
+                    
+                    // Weekly Summary
+                    weeklySummarySection
+                    
+                    Spacer(minLength: 100)
+                }
+                .padding(.horizontal)
+                .padding(.top)
+            }
+            .background(themeManager.currentTheme.backgroundColor.ignoresSafeArea())
+            .navigationTitle("Progress")
+            .navigationBarTitleDisplayMode(.large)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Menu {
+                        Button("Detailed Stats") {
+                            showingDetailedStats = true
+                        }
+                        
+                        Button("Export Data") {
+                            exportProgressData()
+                        }
+                        
+                        Button("Sync with Health") {
+                            syncWithHealthKit()
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
+                            .foregroundColor(themeManager.currentTheme.accentColor)
+                    }
+                }
+            }
+        }
+        .onAppear {
+            withAnimation(.easeInOut(duration: 1.0).delay(0.3)) {
+                animateCharts = true
+            }
+        }
+        .sheet(isPresented: $showingDetailedStats) {
+            DetailedStatsView()
+        }
+        .sheet(isPresented: $showingPersonalRecords) {
+            PersonalRecordsView()
+        }
+    }
+    
+    // MARK: - Header Stats Section
+    private var headerStatsSection: some View {
+        LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 2), spacing: 16) {
+            ProgressStatCard(
+                title: "Total Workouts",
+                value: "\(progressManager.workoutHistory.count)",
+                subtitle: "Sessions completed",
+                icon: "dumbbell.fill",
+                color: .blue,
+                trend: calculateWorkoutTrend(),
+                animate: animateCharts
+            )
+            
+            ProgressStatCard(
+                title: "Total Time",
+                value: formatTotalTime(),
+                subtitle: "Hours trained",
+                icon: "clock.fill",
+                color: .green,
+                trend: calculateTimeTrend(),
+                animate: animateCharts
+            )
+            
+            ProgressStatCard(
+                title: "Calories Burned",
+                value: formatTotalCalories(),
+                subtitle: "Energy expended",
+                icon: "flame.fill",
+                color: .orange,
+                trend: calculateCaloriesTrend(),
+                animate: animateCharts
+            )
+            
+            ProgressStatCard(
+                title: "Current Streak",
+                value: "\(calculateCurrentStreak())",
+                subtitle: "Days active",
+                icon: "bolt.fill",
+                color: .yellow,
+                trend: .neutral,
+                animate: animateCharts
+            )
+        }
+    }
+    
+    // MARK: - Progress Charts Section
+    private var progressChartsSection: some View {
+        VStack(spacing: 16) {
+            // Time Frame Selector
+            Picker("Time Frame", selection: $selectedTimeFrame) {
+                ForEach(TimeFrame.allCases, id: \.self) { timeFrame in
+                    Text(timeFrame.rawValue.capitalized).tag(timeFrame)
+                }
+            }
+            .pickerStyle(SegmentedPickerStyle())
+            
+            // Metric Selector
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 12) {
+                    ForEach(ProgressMetric.allCases, id: \.self) { metric in
+                        MetricChip(
+                            metric: metric,
+                            isSelected: selectedMetric == metric
+                        ) {
+                            selectedMetric = metric
+                        }
+                    }
+                }
+                .padding(.horizontal)
+            }
+            
+            // Chart Display
+            chartView
+                .frame(height: 250)
+                .padding()
+                .background(themeManager.currentTheme.cardBackgroundColor)
+                .cornerRadius(16)
+                .shadow(color: Color.black.opacity(0.1), radius: 8, x: 0, y: 4)
+        }
+    }
+    
+    @ViewBuilder
+    private var chartView: some View {
+        switch selectedMetric {
+        case .workouts:
+            workoutChart
+        case .duration:
+            durationChart
+        case .calories:
+            caloriesChart
+        case .weight:
+            weightChart
+        case .strength:
+            strengthChart
+        }
+    }
+    
+    private var workoutChart: some View {
+        Chart(getChartData(for: .workouts)) { dataPoint in
+            LineMark(
+                x: .value("Date", dataPoint.date),
+                y: .value("Workouts", dataPoint.value)
+            )
+            .foregroundStyle(themeManager.currentTheme.accentColor)
+            .lineStyle(StrokeStyle(lineWidth: 3))
+            
+            AreaMark(
+                x: .value("Date", dataPoint.date),
+                y: .value("Workouts", dataPoint.value)
+            )
+            .foregroundStyle(
+                LinearGradient(
+                    colors: [themeManager.currentTheme.accentColor.opacity(0.3), .clear],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+            )
+            
+            if animateCharts {
+                PointMark(
+                    x: .value("Date", dataPoint.date),
+                    y: .value("Workouts", dataPoint.value)
+                )
+                .foregroundStyle(themeManager.currentTheme.accentColor)
+                .symbolSize(40)
+            }
+        }
+        .chartXAxis {
+            AxisMarks(values: .stride(by: selectedTimeFrame.axisStride)) { _ in
+                AxisGridLine()
+                AxisValueLabel(format: selectedTimeFrame.dateFormat)
+            }
+        }
+        .chartYAxis {
+            AxisMarks { _ in
+                AxisGridLine()
+                AxisValueLabel()
+            }
+        }
+        .animation(.easeInOut(duration: 1.0), value: animateCharts)
+    }
+    
+    private var durationChart: some View {
+        Chart(getChartData(for: .duration)) { dataPoint in
+            BarMark(
+                x: .value("Date", dataPoint.date),
+                y: .value("Duration", dataPoint.value)
+            )
+            .foregroundStyle(Color.green)
+            .cornerRadius(4)
+        }
+        .chartXAxis {
+            AxisMarks(values: .stride(by: selectedTimeFrame.axisStride)) { _ in
+                AxisGridLine()
+                AxisValueLabel(format: selectedTimeFrame.dateFormat)
+            }
+        }
+        .animation(.easeInOut(duration: 1.0), value: animateCharts)
+    }
+    
+    private var caloriesChart: some View {
+        Chart(getChartData(for: .calories)) { dataPoint in
+            LineMark(
+                x: .value("Date", dataPoint.date),
+                y: .value("Calories", dataPoint.value)
+            )
+            .foregroundStyle(Color.orange)
+            .lineStyle(StrokeStyle(lineWidth: 3))
+            
+            AreaMark(
+                x: .value("Date", dataPoint.date),
+                y: .value("Calories", dataPoint.value)
+            )
+            .foregroundStyle(
+                LinearGradient(
+                    colors: [Color.orange.opacity(0.3), .clear],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+            )
+        }
+        .animation(.easeInOut(duration: 1.0), value: animateCharts)
+    }
+    
+    private var weightChart: some View {
+        Chart(getChartData(for: .weight)) { dataPoint in
+            LineMark(
+                x: .value("Date", dataPoint.date),
+                y: .value("Weight", dataPoint.value)
+            )
+            .foregroundStyle(Color.blue)
+            .lineStyle(StrokeStyle(lineWidth: 3))
+        }
+        .chartYScale(domain: getWeightDomain())
+        .animation(.easeInOut(duration: 1.0), value: animateCharts)
+    }
+    
+    private var strengthChart: some View {
+        Chart(getStrengthChartData()) { dataPoint in
+            BarMark(
+                x: .value("Exercise", dataPoint.exercise),
+                y: .value("Max Weight", dataPoint.maxWeight)
+            )
+            .foregroundStyle(Color.purple)
+            .cornerRadius(4)
+        }
+        .chartXAxis {
+            AxisMarks { _ in
+                AxisValueLabel()
+                    .font(.caption)
+            }
+        }
+        .animation(.easeInOut(duration: 1.0), value: animateCharts)
+    }
+    
+    // MARK: - Personal Records Section
+    private var personalRecordsSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("🏆 Personal Records")
+                    .font(.headline)
+                    .foregroundColor(themeManager.currentTheme.primaryTextColor)
+                
+                Spacer()
+                
+                Button("View All") {
+                    showingPersonalRecords = true
+                }
+                .font(.caption)
+                .foregroundColor(themeManager.currentTheme.accentColor)
+            }
+            
+            LazyVStack(spacing: 8) {
+                ForEach(progressManager.personalRecords.values.prefix(4).sorted(by: { $0.dateAchieved > $1.dateAchieved }), id: \.id) { record in
+                    PersonalRecordCard(record: record)
+                }
+            }
+        }
+        .padding()
+        .background(themeManager.currentTheme.cardBackgroundColor)
+        .cornerRadius(16)
+        .shadow(color: Color.black.opacity(0.1), radius: 8, x: 0, y: 4)
+    }
+    
+    // MARK: - Body Measurements Section
+    private var bodyMeasurementsSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("📏 Body Measurements")
+                    .font(.headline)
+                    .foregroundColor(themeManager.currentTheme.primaryTextColor)
+                
+                Spacer()
+                
+                NavigationLink("Add Entry", destination: BodyMeasurementEntryView())
+                    .font(.caption)
+                    .foregroundColor(themeManager.currentTheme.accentColor)
+            }
+            
+            if progressManager.bodyMeasurements.isEmpty {
+                EmptyMeasurementsView()
+            } else {
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 2), spacing: 12) {
+                    ForEach(progressManager.latestMeasurements, id: \.type) { measurement in
+                        MeasurementCard(measurement: measurement)
+                    }
+                }
+            }
+        }
+        .padding()
+        .background(themeManager.currentTheme.cardBackgroundColor)
+        .cornerRadius(16)
+        .shadow(color: Color.black.opacity(0.1), radius: 8, x: 0, y: 4)
+    }
+    
+    // MARK: - Achievements Section
+    private var achievementsSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("🎖️ Recent Achievements")
+                    .font(.headline)
+                    .foregroundColor(themeManager.currentTheme.primaryTextColor)
+                
+                Spacer()
+                
+                NavigationLink("View All", destination: AchievementsView())
+                    .font(.caption)
+                    .foregroundColor(themeManager.currentTheme.accentColor)
+            }
+            
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 12) {
+                    ForEach(progressManager.recentAchievements.prefix(5)) { achievement in
+                        AchievementBadge(achievement: achievement)
+                    }
+                }
+                .padding(.horizontal, 4)
+            }
+        }
+        .padding()
+        .background(themeManager.currentTheme.cardBackgroundColor)
+        .cornerRadius(16)
+        .shadow(color: Color.black.opacity(0.1), radius: 8, x: 0, y: 4)
+    }
+    
+    // MARK: - Weekly Summary Section
+    private var weeklySummarySection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("📊 This Week")
+                .font(.headline)
+                .foregroundColor(themeManager.currentTheme.primaryTextColor)
+            
+            let weeklyStats = progressManager.currentWeekStats
+            
+            VStack(spacing: 12) {
+                WeeklySummaryRow(
+                    title: "Workouts Completed",
+                    current: weeklyStats.workoutCount,
+                    goal: 4,
+                    unit: "sessions"
+                )
+                
+                WeeklySummaryRow(
+                    title: "Total Duration",
+                    current: Int(weeklyStats.totalDuration),
+                    goal: 180,
+                    unit: "minutes"
+                )
+                
+                WeeklySummaryRow(
+                    title: "Calories Burned",
+                    current: Int(weeklyStats.totalCalories),
+                    goal: 1500,
+                    unit: "cal"
+                )
+                
+                WeeklySummaryRow(
+                    title: "Active Days",
+                    current: weeklyStats.activeDays,
+                    goal: 5,
+                    unit: "days"
+                )
+            }
+        }
+        .padding()
+        .background(themeManager.currentTheme.cardBackgroundColor)
+        .cornerRadius(16)
+        .shadow(color: Color.black.opacity(0.1), radius: 8, x: 0, y: 4)
+    }
+    
+    // MARK: - Helper Functions
+    private func getChartData(for metric: ProgressMetric) -> [ChartDataPoint] {
+        let calendar = Calendar.current
+        let endDate = Date()
+        let startDate = calendar.date(byAdding: selectedTimeFrame.calendarComponent, value: -selectedTimeFrame.value, to: endDate) ?? endDate
+        
+        var dataPoints: [ChartDataPoint] = []
+        var currentDate = startDate
+        
+        while currentDate <= endDate {
+            let value = progressManager.getMetricValue(metric, for: currentDate, timeFrame: selectedTimeFrame)
+            dataPoints.append(ChartDataPoint(date: currentDate, value: value))
+            currentDate = calendar.date(byAdding: selectedTimeFrame.incrementComponent, value: 1, to: currentDate) ?? currentDate
+        }
+        
+        return dataPoints
+    }
+    
+    private func getStrengthChartData() -> [StrengthChartDataPoint] {
+        let topExercises = progressManager.personalRecords.values
+            .filter { $0.exerciseType == .strength }
+            .sorted { $0.value > $1.value }
+            .prefix(6)
+        
+        return topExercises.map { record in
+            StrengthChartDataPoint(
+                exercise: record.exerciseName,
+                maxWeight: record.value
+            )
+        }
+    }
+    
+    private func getWeightDomain() -> ClosedRange<Double> {
+        let weights = getChartData(for: .weight).map { $0.value }
+        let minWeight = weights.min() ?? 60
+        let maxWeight = weights.max() ?? 80
+        let padding = (maxWeight - minWeight) * 0.1
+        return (minWeight - padding)...(maxWeight + padding)
+    }
+    
+    private func calculateWorkoutTrend() -> TrendDirection {
+        let thisMonth = progressManager.getWorkoutCount(for: .month)
+        let lastMonth = progressManager.getWorkoutCount(for: .month, offset: -1)
+        
+        if thisMonth > lastMonth { return .up }
+        else if thisMonth < lastMonth { return .down }
+        else { return .neutral }
+    }
+    
+    private func calculateTimeTrend() -> TrendDirection {
+        let thisMonth = progressManager.getTotalDuration(for: .month)
+        let lastMonth = progressManager.getTotalDuration(for: .month, offset: -1)
+        
+        if thisMonth > lastMonth { return .up }
+        else if thisMonth < lastMonth { return .down }
+        else { return .neutral }
+    }
+    
+    private func calculateCaloriesTrend() -> TrendDirection {
+        let thisMonth = progressManager.getTotalCalories(for: .month)
+        let lastMonth = progressManager.getTotalCalories(for: .month, offset: -1)
+        
+        if thisMonth > lastMonth { return .up }
+        else if thisMonth < lastMonth { return .down }
+        else { return .neutral }
+    }
+    
+    private func calculateCurrentStreak() -> Int {
+        let calendar = Calendar.current
+        var streak = 0
+        var currentDate = Date()
+        
+        while streak < 365 {
+            let hasWorkout = progressManager.workoutHistory.contains { session in
+                calendar.isDate(session.date, inSameDayAs: currentDate)
+            }
+            
+            if !hasWorkout { break }
+            
+            streak += 1
+            currentDate = calendar.date(byAdding: .day, value: -1, to: currentDate) ?? currentDate
+        }
+        
+        return streak
+    }
+    
+    private func formatTotalTime() -> String {
+        let totalMinutes = progressManager.workoutHistory.reduce(0) { $0 + $1.duration }
+        let hours = Int(totalMinutes) / 60
+        return "\(hours)"
+    }
+    
+    private func formatTotalCalories() -> String {
+        let totalCalories = progressManager.workoutHistory.reduce(0) { $0 + $1.caloriesBurned }
+        if totalCalories >= 1000 {
+            return String(format: "%.1fk", totalCalories / 1000)
+        } else {
+            return "\(Int(totalCalories))"
+        }
+    }
+    
+    private func exportProgressData() {
+        // Implementation for exporting progress data
+        print("Exporting progress data...")
+    }
+    
+    private func syncWithHealthKit() {
+        healthManager.syncAllData()
+    }
+}
+
+// MARK: - Enums and Data Structures
+
+enum TimeFrame: String, CaseIterable {
+    case week, month, quarter, year
+    
+    var value: Int {
+        switch self {
+        case .week: return 7
+        case .month: return 30
+        case .quarter: return 90
+        case .year: return 365
+        }
+    }
+    
+    var calendarComponent: Calendar.Component {
+        switch self {
+        case .week: return .day
+        case .month: return .day
+        case .quarter: return .day
+        case .year: return .month
+        }
+    }
+    
+    var incrementComponent: Calendar.Component {
+        switch self {
+        case .week: return .day
+        case .month: return .day
+        case .quarter: return .weekOfYear
+        case .year: return .month
+        }
+    }
+    
+    var axisStride: Calendar.Component.Value {
+        switch self {
+        case .week: return .day
+        case .month: return .weekOfYear
+        case .quarter: return .month
+        case .year: return .quarter
+        }
+    }
+    
+    var dateFormat: Date.FormatStyle {
+        switch self {
+        case .week: return .dateTime.weekday(.abbreviated)
+        case .month: return .dateTime.day()
+        case .quarter: return .dateTime.month(.abbreviated)
+        case .year: return .dateTime.month(.abbreviated)
+        }
+    }
+}
+
+enum ProgressMetric: String, CaseIterable {
+    case workouts, duration, calories, weight, strength
+    
+    var icon: String {
+        switch self {
+        case .workouts: return "dumbbell.fill"
+        case .duration: return "clock.fill"
+        case .calories: return "flame.fill"
+        case .weight: return "scalemass.fill"
+        case .strength: return "bolt.fill"
+        }
+    }
+    
+    var color: Color {
+        switch self {
+        case .workouts: return .blue
+        case .duration: return .green
+        case .calories: return .orange
+        case .weight: return .purple
+        case .strength: return .red
+        }
+    }
+}
+
+enum TrendDirection {
+    case up, down, neutral
+    
+    var icon: String {
+        switch self {
+        case .up: return "arrow.up.right"
+        case .down: return "arrow.down.right"
+        case .neutral: return "minus"
+        }
+    }
+    
+    var color: Color {
+        switch self {
+        case .up: return .green
+        case .down: return .red
+        case .neutral: return .gray
+        }
+    }
+}
+
+struct ChartDataPoint: Identifiable {
+    let id = UUID()
+    let date: Date
+    let value: Double
+}
+
+struct StrengthChartDataPoint: Identifiable {
+    let id = UUID()
+    let exercise: String
+    let maxWeight: Double
+}
+
+// MARK: - Supporting Views
+
+struct ProgressStatCard: View {
+    let title: String
+    let value: String
+    let subtitle: String
+    let icon: String
+    let color: Color
+    let trend: TrendDirection
+    let animate: Bool
+    @EnvironmentObject var themeManager: ThemeManager
+    
+    var body: some View {
+        VStack(spacing: 8) {
+            HStack {
+                Image(systemName: icon)
+                    .foregroundColor(color)
+                    .font(.title2)
+                
+                Spacer()
+                
+                Image(systemName: trend.icon)
+                    .foregroundColor(trend.color)
+                    .font(.caption)
+            }
+            
+            VStack(alignment: .leading, spacing: 2) {
+                Text(value)
+                    .font(.title2)
+                    .fontWeight(.bold)
+                    .foregroundColor(themeManager.currentTheme.primaryTextColor)
+                    .scaleEffect(animate ? 1.0 : 0.8)
+                    .animation(.spring(response: 0.6, dampingFraction: 0.8).delay(0.1), value: animate)
+                
+                Text(subtitle)
+                    .font(.caption)
+                    .foregroundColor(themeManager.currentTheme.secondaryTextColor)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            
+            Text(title)
+                .font(.caption)
+                .foregroundColor(themeManager.currentTheme.secondaryTextColor)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding()
+        .background(themeManager.currentTheme.cardBackgroundColor)
+        .cornerRadius(12)
+    }
+}
+
+struct MetricChip: View {
+    let metric: ProgressMetric
+    let isSelected: Bool
+    let action: () -> Void
+    @EnvironmentObject var themeManager: ThemeManager
+    
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                Image(systemName: metric.icon)
+                    .font(.caption)
+                
+                Text(metric.rawValue.capitalized)
+                    .font(.caption)
+                    .fontWeight(.medium)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(isSelected ? metric.color.opacity(0.2) : Color.gray.opacity(0.1))
+            .foregroundColor(isSelected ? metric.color : themeManager.currentTheme.secondaryTextColor)
+            .cornerRadius(16)
+        }
+        .buttonStyle(PlainButtonStyle())
+    }
+}
+
+struct PersonalRecordCard: View {
+    let record: PersonalRecord
+    @EnvironmentObject var themeManager: ThemeManager
+    
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: record.exerciseType.icon)
+                .foregroundColor(record.exerciseType.color)
+                .font(.title3)
+                .frame(width: 24, height: 24)
+            
+            VStack(alignment: .leading, spacing: 2) {
+                Text(record.exerciseName)
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                    .foregroundColor(themeManager.currentTheme.primaryTextColor)
+                
+                Text(record.formattedValue)
+                    .font(.caption)
+                    .foregroundColor(themeManager.currentTheme.secondaryTextColor)
+            }
+            
+            Spacer()
+            
+            VStack(alignment: .trailing, spacing: 2) {
+                Text("NEW")
+                    .font(.caption2)
+                    .fontWeight(.bold)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Color.green)
+                    .foregroundColor(.white)
+                    .cornerRadius(4)
+                
+                Text(record.dateAchieved, style: .relative)
+                    .font(.caption2)
+                    .foregroundColor(themeManager.currentTheme.secondaryTextColor)
+            }
+        }
+        .padding(.vertical, 8)
+        .padding(.horizontal, 12)
+        .background(themeManager.currentTheme.backgroundColor.opacity(0.3))
+        .cornerRadius(8)
+    }
+}
+
+struct MeasurementCard: View {
+    let measurement: BodyMeasurement
+    @EnvironmentObject var themeManager: ThemeManager
+    
+    var body: some View {
+        VStack(spacing: 8) {
+            Text(measurement.type.emoji)
+                .font(.title2)
+            
+            VStack(spacing: 2) {
+                Text(measurement.formattedValue)
+                    .font(.headline)
+                    .fontWeight(.bold)
+                    .foregroundColor(themeManager.currentTheme.primaryTextColor)
+                
+                Text(measurement.type.name)
+                    .font(.caption)
+                    .foregroundColor(themeManager.currentTheme.secondaryTextColor)
+            }
+            
+            Text(measurement.date, style: .relative)
+                .font(.caption2)
+                .foregroundColor(themeManager.currentTheme.secondaryTextColor)
+        }
+        .frame(maxWidth: .infinity)
+        .padding()
+        .background(Color.gray.opacity(0.1))
+        .cornerRadius(8)
+    }
+}
+
+struct EmptyMeasurementsView: View {
+    @EnvironmentObject var themeManager: ThemeManager
+    
+    var body: some View {
+        VStack(spacing: 8) {
+            Text("📏")
+                .font(.system(size: 32))
+            
+            Text("No measurements yet")
+                .font(.subheadline)
+                .fontWeight(.medium)
+                .foregroundColor(themeManager.currentTheme.primaryTextColor)
+            
+            Text("Track your progress by adding body measurements")
+                .font(.caption)
+                .foregroundColor(themeManager.currentTheme.secondaryTextColor)
+                .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity)
+        .padding()
+        .background(Color.gray.opacity(0.1))
+        .cornerRadius(8)
+    }
+}
+
+struct AchievementBadge: View {
+    let achievement: Achievement
+    
+    var body: some View {
+        VStack(spacing: 6) {
+            Text(achievement.emoji)
+                .font(.title2)
+            
+            Text(achievement.title)
+                .font(.caption2)
+                .fontWeight(.medium)
+                .multilineTextAlignment(.center)
+                .lineLimit(2)
+            
+            if achievement.isRecent {
+                Circle()
+                    .fill(Color.green)
+                    .frame(width: 6, height: 6)
+            }
+        }
+        .frame(width: 80)
+        .padding(.vertical, 8)
+        .background(achievement.category.color.opacity(0.1))
+        .cornerRadius(8)
+    }
+}
+
+struct WeeklySummaryRow: View {
+    let title: String
+    let current: Int
+    let goal: Int
+    let unit: String
+    @EnvironmentObject var themeManager: ThemeManager
+    
+    private var progress: Double {
+        guard goal > 0 else { return 0 }
+        return min(Double(current) / Double(goal), 1.0)
+    }
+    
+    var body: some View {
+        VStack(spacing: 6) {
+            HStack {
+                Text(title)
+                    .font(.subheadline)
+                    .foregroundColor(themeManager.currentTheme.primaryTextColor)
+                
+                Spacer()
+                
+                Text("\(current)/\(goal) \(unit)")
+                    .font(.caption)
+                    .foregroundColor(themeManager.currentTheme.secondaryTextColor)
+            }
+            
+            ProgressView(value: progress)
+                .progressViewStyle(LinearProgressViewStyle(tint: themeManager.currentTheme.accentColor))
+                .scaleEffect(y: 0.5)
+        }
+    }
+}
+
+#Preview {
+    ProgressView()
+        .environmentObject(ProgressManager())
+        .environmentObject(ThemeManager())
+        .environmentObject(AuthenticationManager())
+        .environmentObject(HealthManager())
+}
